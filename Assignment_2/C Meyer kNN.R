@@ -1,0 +1,263 @@
+# Load the libraries we're going to use:
+suppressWarnings(suppressPackageStartupMessages(library(FNN)))
+suppressWarnings(suppressPackageStartupMessages(library(caret)))
+suppressWarnings(suppressPackageStartupMessages(library(e1071)))
+suppressWarnings(suppressPackageStartupMessages(library(dplyr)))
+suppressWarnings(suppressPackageStartupMessages(library(fastDummies)))
+suppressWarnings(suppressPackageStartupMessages(library(gmodels)))
+# Suppressing loading spam and version warnings because they're ugly and take up space in the markdown.
+
+# Load the Universal Bank data
+UB <- read.csv("D:/GoogleDrive/Studenting/2021 Spring/Machine Learning/Assignments/A2/UniversalBank.csv", header=TRUE)
+# Any missing data?
+table(is.na(UB))
+# Nope, no missing data! Good.
+
+# Get some basic info:
+head(UB, 10)
+summary(UB)
+
+# We won't be modeling ID (1) or ZIP.Code (5), so let's remove them.
+UB <- UB[-c(5)]
+UB <- UB[-c(1)]
+head(UB, 10)
+
+# Family and Education potentially categorical. Let's check:
+table(UB$Family)
+table(UB$Education)
+# With no codebook, it's unclear what the levels of Family represent exactly,
+# but with only four levels, it's appropriate to treat as categorical. Next,
+# with only three levels, education definitely isn't continuous.
+# Thus, we will transform both Family and Education into dummy variables.
+
+UBD <- dummy_cols(UB, select_columns = c("Family", "Education"))
+UBD <- UBD[-c(6)] #Removing non-dummied Education
+UBD <- UBD[-c(4)] #Removing non-dummied Family
+head(UBD,3)
+# Looks good!
+
+# Preparing the data for training/validation split (60/40):
+set.seed(222) # Because assignment 2, obviously
+train.rows <- sample(rownames(UBD), dim(UBD)[1]*.6) #60% into training set
+train.data <- UBD[train.rows, ]
+valid.rows <- setdiff(rownames(UBD), train.rows)
+valid.data <- UBD[valid.rows, ]
+summary(train.data)
+summary(valid.data)
+# This output is very noisy, so let's simplify for user friendliness.
+
+tempTD <- colMeans(train.data)
+tempVD <- colMeans(valid.data)
+sprintf("%.3f", tempTD)
+sprintf("%.3f", tempVD)
+rm(tempTD)
+rm(tempVD)
+# That all seems pretty comparable, so let's normalize ALL THE THINGS!!!
+train.norm <- train.data
+valid.norm <- valid.data
+norm.values <- preProcess(train.data[, c("Age","Experience","Income","CCAvg","Mortgage")], method=c("center", "scale"))
+train.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, train.data[, c("Age","Experience","Income","CCAvg","Mortgage")])
+valid.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, valid.data[, c("Age","Experience","Income","CCAvg","Mortgage")])
+summary(train.norm) #The continuous variables have been successfully standardized!
+
+# Now onto the assignment! Question 1:
+#Perform a k-NN classification with all predictors except ID and ZIP code using 
+#k = 1. Remember to transform categorical predictors with more than two 
+#categories into dummy variables first. Specify the success class as 1 (loan 
+#acceptance), and use the default cutoff value of 0.5. How would this customer 
+#be classified?
+
+# This will be the target individual to attempt classification of:
+cust.new <- data.frame(Age = 40, Experience = 10, Income = 84, CCAvg = 2,
+                       Mortgage = 0, Securities.Account = 0, CD.Account = 0, 
+                       Online = 1, CreditCard =1, Family_1 = 0, Family_2 = 1, 
+                       Family_3 = 0, Family_4 = 0, Education_1 = 0, 
+                       Education_2 = 1, Education_3 = 0)
+cust.norm <- predict(norm.values, cust.new)
+print(cust.norm) #Here's what those numbers look like normalized.
+
+predictors <- c(1:5,7:17) # This will make the code below easier to read.
+
+nn <- knn(train=train.norm[, predictors], test=cust.norm, cl=train.norm[, 6], k=1)
+row.names(train.norm)[attr(nn, "nn.index")] #Confirm index number of closest neighbor
+print(train.norm[attr(nn, "nn.index"),]) #Here's that closest neighbor. It does look very close.
+nn[1]
+# This customer is classified as 0 (will not accept Personal Loan)
+
+# But that's using just the training subset. What if we used the entire UBD data
+# set as if it were all training data?
+UBD.norm <- UBD
+norm.values <- preProcess(UBD[, c("Age","Experience","Income","CCAvg","Mortgage")], method=c("center", "scale"))
+UBD.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, UBD[, c("Age","Experience","Income","CCAvg","Mortgage")])
+nn <- knn(train=UBD.norm[, predictors], test=cust.norm, cl=UBD.norm[, 6], k=1)
+row.names(UBD.norm)[attr(nn, "nn.index")] #Again, confirming index number of NN.
+print(UBD.norm[attr(nn, "nn.index"),]) #NN still looks very close.
+nn[1]
+# Same answer.
+
+# 1. How would this customer be classified?
+# The nearest neighbor was 0, so we see this new customer would be classified accordingly.
+answer1 <- "Q1: How would this customer be classified? A1: The new customer would be classified as 0 (will not accept loan)."
+
+# 2. What is a choice of k that balances between overfitting and ignoring the predictor information?
+
+# Hyperparameterization time!
+accuracy.df <- data.frame(k = seq(1, 14, 1), accuracy = rep(0, 14), sensitivity = rep(0,14),
+                          specificity=rep(0,14), precision=rep(0,14), PPV=rep(0,14), 
+                          NPV=rep(0,14),  F1=rep(0,14) )
+for(i in 1:14) {
+  knn.pred <- knn(train.norm[,predictors], valid.norm[,predictors], 
+                    cl = as.factor(train.norm[, 6]), k = i)
+  CMtemp <- confusionMatrix(knn.pred, as.factor(valid.norm[, 6]), positive="1")
+  accuracy.df[i, 2] <- CMtemp$overall[1] #Accuracy
+  accuracy.df[i, 3] <- CMtemp$byClass[c("Sensitivity")]
+  accuracy.df[i, 4] <- CMtemp$byClass[c("Specificity")]
+  accuracy.df[i, 5] <- CMtemp$byClass[c("Precision")]
+  accuracy.df[i, 6] <- CMtemp$byClass[c("Pos Pred Value")]
+  accuracy.df[i, 7] <- CMtemp$byClass[c("Neg Pred Value")]
+  accuracy.df[i, 8] <- CMtemp$byClass[c("F1")]
+}
+accuracy.df
+
+# What do we want to optimize for?
+# Well, UB presumably wants to identify the highest number of likely candidates
+# for loans, and presumably doesn't especially mind sending out advertisements
+# to false positives; there's a cost associated with sending ads to prospects,
+# but it probably isn't very high. There's a much higher cost associated with
+# failing to send an ad to someone who would have accepted it. Thus, there's
+# likely a higher cost associated with false negatives than false positives.
+# This means we can focus on SENSITIVITY/RECALL: the proportion of the true
+# values that are correctly predicted.
+# With that in mind, the best k for this appears to be k=3, followed by k=5.
+# We avoid k=1 because that will be too unstable.
+
+answer2 <- "Q2: What is a choice of k that balances between overfitting and ignoring the predictor information? A2: k=3 discourages overfitting by being parsimonious while also having the highest sensitivity/recall of all k>1"
+
+print("3. Show the confusion matrix for the validation data that results from using the best k.")
+knn.pred <- knn(train.norm[,predictors], valid.norm[,predictors], cl = as.factor(train.norm[, 6]), k = 3)
+CrossTable(x=valid.norm[,6],y=knn.pred, prop.chisq = FALSE)
+answer3 <- CrossTable(x=valid.norm[,6],y=knn.pred, prop.chisq = FALSE)
+
+#4.Consider the following customer: (Information identical to above)
+#Classify the customer using the best k.
+
+nn <- knn(train=train.norm[, predictors], test=cust.norm, cl=train.norm[, 6], k=3, prob=TRUE)
+print(train.norm[attr(nn, "nn.index"),]) #Here's info on the k closest neighbors
+# All three have Personal.Loan=0, so we expect knn() to classify our customer
+# as 0 (will not accept loan)
+answer4 <- paste("Q4: Classify the customer using the best k. A4:",nn[1], "(will not accept personal loan)")
+# ...and it did!
+
+
+#5. Repartition the data, this time into training, validation, and test sets
+#(50% : 30% : 20%). Apply the k-NN method with the k chosen above. Compare the
+#confusion matrix of the test set with that of the training and validation sets.
+#Comment on the differences and their reason.
+
+set.seed(2225) # Because assignment 2, question 5
+test.index = createDataPartition(UBD$Personal.Loan,p=0.2, list=FALSE) # 20% into test set
+test.data = UBD[test.index,]
+trainvalid.data = UBD[-test.index,] # The other 80% into training and validation
+
+train.index = createDataPartition(trainvalid.data$Personal.Loan,p=0.625, list=FALSE) #Of the remaining 80%, this produces the desired 50:30 split
+train.data = trainvalid.data[train.index,]
+valid.data = trainvalid.data[-train.index,]
+
+# Make sure no absurd outliers - note: we're not looking at test.data:
+tempTD <- colMeans(train.data)
+tempVD <- colMeans(valid.data)
+sprintf("%.3f", tempTD)
+sprintf("%.3f", tempVD)
+# As expected. Good!
+rm(tempTD)
+rm(tempVD)
+
+# Now we normalize these data sets:
+train.norm <- train.data
+valid.norm <- valid.data
+norm.values <- preProcess(train.data[, c("Age","Experience","Income","CCAvg","Mortgage")], method=c("center", "scale"))
+train.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, train.data[, c("Age","Experience","Income","CCAvg","Mortgage")])
+valid.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, valid.data[, c("Age","Experience","Income","CCAvg","Mortgage")])
+
+summary(train.norm) # All continuous variable means are 0, as expected.
+summary(valid.norm) # Not all means are 0, again as expected because we normed these using the training data.
+
+# We weren't asked to re-review the best k, but it's easy enough to copy and 
+# paste, and it will be good to have it confirmed.
+for(i in 1:14) {
+  knn.pred <- knn(train.norm[,predictors], valid.norm[,predictors], 
+                  cl = as.factor(train.norm[, 6]), k = i)
+  CMtemp <- confusionMatrix(knn.pred, as.factor(valid.norm[, 6]), positive="1")
+  accuracy.df[i, 2] <- CMtemp$overall[1] #Accuracy
+  accuracy.df[i, 3] <- CMtemp$byClass[c("Sensitivity")]
+  accuracy.df[i, 4] <- CMtemp$byClass[c("Specificity")]
+  accuracy.df[i, 5] <- CMtemp$byClass[c("Precision")]
+  accuracy.df[i, 6] <- CMtemp$byClass[c("Pos Pred Value")]
+  accuracy.df[i, 7] <- CMtemp$byClass[c("Neg Pred Value")]
+  accuracy.df[i, 8] <- CMtemp$byClass[c("F1")]
+}
+accuracy.df
+# k=3 still produces the strongest model judging by sensitivity.
+# How's the confusion matrix look?
+
+knn.pred <- knn(train.norm[,predictors], valid.norm[,predictors], cl = as.factor(train.norm[, 6]), k = 3)
+trainvalidCM <- confusionMatrix(knn.pred, as.factor(valid.norm[, 6]), positive="1")
+CrossTable(x=valid.norm[,6],y=knn.pred, prop.chisq = FALSE)
+# You can see the sensitivity (.594) in the bottom right cell's Row Total.
+
+# So now let's see how well our model performs against the test set, this time
+# using the recombined pool of training and validation sets as the new train:
+trainvalid.norm <- trainvalid.data
+norm.values <- preProcess(trainvalid.data[, c("Age","Experience","Income","CCAvg","Mortgage")], method=c("center", "scale"))
+trainvalid.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, trainvalid.data[, c("Age","Experience","Income","CCAvg","Mortgage")])
+
+test.norm <- test.data
+test.norm[, c("Age","Experience","Income","CCAvg","Mortgage")] <- predict(norm.values, test.data[, c("Age","Experience","Income","CCAvg","Mortgage")])
+
+knn.pred <- knn(trainvalid.norm[,predictors], test.norm[,predictors], cl = as.factor(trainvalid.norm[, 6]), k = 3)
+testCM <- confusionMatrix(knn.pred, as.factor(test.norm[, 6]), positive="1")
+CrossTable(x=test.norm[,6],y=knn.pred, prop.chisq = FALSE)
+# Our final sensitivity value (62/106 = .585) is comparable to the validation set (.594).
+# I think that's the best we're going to get out of the default classification probability.
+
+# Compare the two confusion matrices:
+trainvalidCM
+testCM
+
+# The two are largely comparable. In most areas, the test confusion matrix (CM) 
+# is slightly behind the training and validation CM. This is to be expected 
+# because we built our model specifically using the combination of those two 
+# sets, refining our hyperparameter (k) based on how well it matched training to
+# validation models. The test set contained fully unobserved data, so we expect
+# there to be some difference in accuracy measures as a result. While it is 
+# somewhat surprising that the Pos Pred Value from the final test set was higher
+# than its counterpart in the training/validation pair, the overall difference
+# (.028) is quite small. There were only four false positives in the validation 
+# set, and this number dropped to one in the test set. As you can see below, the
+# percentage of positive cases in the test set (.106) was slightly higher than 
+# in validation (.095) and training (.092), which may have contributed to this 
+# difference. All other differences were negligible.
+
+xtemp <- table(train.norm$Personal.Loan)
+sprintf("Training Data: Personal Loans")
+sprintf("0 (No Loan): n = %4i, %5.2f%%", xtemp[1], xtemp[1]/(xtemp[1]+xtemp[2])*100)
+sprintf("1 (Loan):    n = %4i, %5.2f%%", xtemp[2], xtemp[2]/(xtemp[1]+xtemp[2])*100)
+xtemp <- table(valid.norm$Personal.Loan)
+sprintf("Validation Data: Personal Loans")
+sprintf("0 (No Loan): n = %4i, %5.2f%%", xtemp[1], xtemp[1]/(xtemp[1]+xtemp[2])*100)
+sprintf("1 (Loan):    n = %4i, %5.2f%%", xtemp[2], xtemp[2]/(xtemp[1]+xtemp[2])*100)
+xtemp <- table(test.norm$Personal.Loan)
+sprintf("Test Data: Personal Loans")
+sprintf("0 (No Loan): n = %4i, %5.2f%%", xtemp[1], xtemp[1]/(xtemp[1]+xtemp[2])*100)
+sprintf("1 (Loan):    n = %4i, %5.2f%%", xtemp[2], xtemp[2]/(xtemp[1]+xtemp[2])*100)
+rm(xtemp)
+
+answer5 <- "Q5: Repartition the data, this time into training, validation, and test sets (50% : 30% : 20%). Apply the k-NN method with the k chosen above. Compare the confusion matrix of the test set with that of the training and validation sets. Comment on the differences and their reason. A5: The two are largely comparable. In most areas, the test confusion matrix (CM) is slightly behind the training and validation CM. This is to be expected because we built our model specifically using the combination of those two sets, refining our hyperparameter (k) based on how well it matched training to validation models. The test set contained fully unobserved data, so we expect there to be some difference in accuracy measures as a result. While it is somewhat surprising that the Pos Pred Value from the final test set was higher than its counterpart in the training/validation pair, the overall difference (.028) is quite small. There were only four false positives in the validation set, and this number dropped to one in the test set. The percentage of positive cases in the test set (.106) was slightly higher than in validation (.095) and training (.092), which may have contributed to this difference. All other differences were negligible."
+
+# Summary of all questions and answers:
+answer1
+answer2
+print("Q3: Show the confusion matrix for the validation data that results from using the best k.")
+answer3[1]
+answer4
+answer5
