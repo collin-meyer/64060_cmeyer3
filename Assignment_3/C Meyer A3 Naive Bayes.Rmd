@@ -1,0 +1,128 @@
+---
+title: "A3 Naive Bayes"
+author: "Collin"
+date: "3/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Only using two libraries this time:
+library(naivebayes)
+library(pivottabler) # Don't even need this. It's just pretty.
+```
+```{r, echo=FALSE}
+UB <- read.csv("D:/GoogleDrive/Studenting/2021 Spring/Machine Learning/Assignments/A3 Naive Bayes/UniversalBank.csv", header=TRUE)
+
+UB$Online <- as.factor(UB$Online)
+UB$CreditCard <- as.factor(UB$CreditCard)
+UB$Personal.Loan <- as.factor(UB$Personal.Loan)
+
+df <- UB[c("Online", "CreditCard", "Personal.Loan")]
+
+levels(df$Online) <- c("Offline User", "Online User")
+levels(df$CreditCard) <- c("No CC", "CC")
+levels(df$Personal.Loan) <- c("No Loan", "Loan")
+
+# Preparing the data for training/validation split (60/40):
+set.seed(333) # assignment 3
+train.rows <- sample(rownames(df), dim(df)[1]*.6) #60% into training set
+train.data <- df[train.rows, ]
+valid.rows <- setdiff(rownames(df), train.rows)
+valid.data <- df[valid.rows, ]
+```
+```{r, echo=FALSE}
+noquote(strwrap("A. Create a pivot table for the training data with Online as a column variable, CC as a row variable, and Loan as a secondary row variable. The values inside the table should convey the count. In R use functions melt() and cast(), or function table(). In Python, use panda dataframe methods melt() and pivot()."))
+pivot <- PivotTable$new()
+pivot$addData(df)
+pivot$addColumnDataGroups("Online")
+pivot$addRowDataGroups("CreditCard")
+pivot$addRowDataGroups("Personal.Loan")
+pivot$defineCalculation(calculationName = "Total", summariseExpression = "n()")
+pivot$renderPivot()
+```
+```{r, echo=FALSE}
+noquote(strwrap("B. Consider the task of classifying a customer who owns a bank credit card and is actively using online banking services. Looking at the pivot table, what is the probability that this customer will accept the loan offer? [This is the probability of loan acceptance (Loan = 1) conditional on having a bank credit card (CC = 1) and being an active user of online banking services (Online = 1)]."))
+
+strwrap("For CC=1 and Online=1, N=522, n(Loan=0) = 474, and n(Loan=1) = 48.
+48/522 = 0.092, so there is a 9.2% chance that the customer will accept.")
+```
+```{r, echo=FALSE}
+noquote(strwrap("C. Create two separate pivot tables for the training data. One will have Loan (rows) as a function of Online (columns) and the other will have Loan (rows) as a function of CC."))
+(LxO <- table(train.data$Personal.Loan,train.data$Online))
+(LxCC <- table(train.data$Personal.Loan,train.data$CreditCard))
+
+prop.table(table(train.data$Personal.Loan, train.data$Online), margin=1)
+prop.table(table(train.data$Personal.Loan, train.data$CreditCard), margin=1)
+
+```
+```{r, echo=FALSE}
+noquote(strwrap("Compute the following quantities [P(A | B) means “the probability ofA given B”]:"))
+noquote(strwrap("i. P(CC = 1 | Loan = 1) (the proportion of credit card holders among the loan acceptors):"))
+(Di <- LxCC[2,2] / (LxCC[2,1]+LxCC[2,2])) #Proportion of CC=1 among Loan=1
+noquote(strwrap("ii. P(Online = 1 | Loan = 1):"))
+(Dii <- LxO[2,2] / (LxO[2,1]+LxO[2,2])) #Proportion of Online=1 among Loan=1
+noquote(strwrap("iii. P(Loan = 1) (the proportion of loan acceptors):"))
+(Diii <- (table(train.data$Personal.Loan)[2] / dim(train.data[1]))[1]) #  Proportion of Loan=1
+noquote(strwrap("iv. P(CC = 1 | Loan = 0):"))
+(Div <- LxCC[1,2] / (LxCC[1,1]+LxCC[1,2])) #Proportion of CC=1 among Loan=0
+noquote(strwrap("v. P(Online = 1 | Loan = 0):"))
+(Dv <- LxO[1,2] / (LxO[1,1]+LxO[1,2])) #Proportion of Online=1 among Loan=0
+noquote(strwrap("vi. P(Loan = 0):"))
+(Dvi <- (table(train.data$Personal.Loan)[1] / dim(train.data[1]))[1]) #Proportion of Loan=0
+```
+```{r, echo=FALSE}
+noquote(strwrap("E. Use the quantities computed above to compute the naive Bayes probability P(Loan = 1 | CC = 1, Online = 1)."))
+
+# Naive Bayes - Assuming conditional independence:
+# Numerator:   ((CC=1|L=1)*(ONL=1|L=1)*(L=1))
+sprintf("Numerator:   %f", Di*Dii*Diii)
+# Denominator: ((CC=1|L=1)*(ONL=1|L=1)*(L=1)) + ((CC=1|L=1)*(ONL=1|L=1)*(L=0))
+sprintf("Denominator: %f + %f = %f", Di*Dii*Diii, Div*Dv*Dvi, (Di*Dii*Diii)+(Div*Dv*Dvi))
+# Denominator: 0.01741898 + 0.156897 = 0.174316
+# 0.01741898 / 0.174316 = 0.09992762
+sprintf("Naive Bayes Probability: %f",(Di*Dii*Diii)/((Di*Dii*Diii)+(Div*Dv*Dvi)))
+```
+```{r, echo=FALSE}
+noquote(strwrap("F. Compare this value with the one obtained from the pivot table in (B). Which is a more accurate estimate?"))
+
+strwrap("
+The full probability, obtained in section (B) was .092.
+The naive Bayes probability here (F) was .099, a difference of .007.
+The former estimate (.092) is more accurate because it is computed
+directly from the pivot table holding the full data.
+Naive Bayes assumes conditional independence, so the two will be identical
+only in cases where the conditions are truly independent. This was not the
+case with this data set, as there was some degree of dependence—that is, there
+was a correlation between whether a person took out a personal loan compared
+with whether they had a credit card and/or whether they were an active user
+of online banking.")
+
+strwrap("Naive Bayes is not intended to be maximally precise, however, so this is not 
+necessarily a problem. If a high degree of precision is required, then a 
+different procedure would be more appropriate. Situations in which Naive Bayes
+is appropriate include when complete information is not available, when fast 
+calculation speed is desired, and/or when getting precise point estimates 
+is not a priority.")
+```
+```{r, echo=FALSE}
+noquote(strwrap("G. Which of the entries in this table are needed for computing P(Loan = 1 | CC = 1, Online = 1)? Run naive Bayes on the data. Examine the model output on training data, and find the entry that corresponds to P(Loan = 1 | CC = 1, Online = 1). Compare this to the number you obtained in (E)."))
+
+strwrap("The probabilities of (CC=1) and (Online=1) given Loan=1 and given Loan=0 are
+all necessary in addition to the base probabilities of Loan=1 and Loan=0.
+In other words, all six values are necessary.")
+
+model <- naive_bayes(Personal.Loan ~ Online+CreditCard, data=train.data)
+
+CCON <- data.frame(CreditCard="CC", Online="Online User")
+(pred.prob <- predict(model, newdata=CCON, type="prob"))
+
+strwrap("When CC=1 and Online=1, the model predicts an approximately 10% chance
+that the customer will accept a personal loan.
+In E, I calculated a Naive Bayes probability for Loan=1 of 0.099928.
+Here, the model produced 0.09992762, which is the same answer but out to two
+additional decimal places.")
+```
