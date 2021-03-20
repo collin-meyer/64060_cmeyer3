@@ -1,0 +1,116 @@
+# k means clustering - Assignment 4
+Pharm <- read.csv("D:/GoogleDrive/Studenting/2021 Spring/Machine Learning/Assignments/A4 k Means/Pharmaceuticals.csv", header=TRUE)
+
+#a. Use only the numerical variables (1 to 9) to cluster the 21 firms. Justify 
+#the various choices made in conducting the cluster analysis, such as weights 
+#for different variables, the specific clustering algorithm(s) used, the number 
+#of clusters formed, and so on.
+
+# k Means is sensitive to differences in variable scales, so normalize the data:
+suppressWarnings(suppressPackageStartupMessages(library(caret))) #Suppress noise
+Pharm.norm <- Pharm
+norm.values <- preProcess(Pharm[, c(3:11)], method=c("center", "scale"))
+Pharm.norm[, c(3:11)] <- predict(norm.values, Pharm[, c(3:11)])
+
+# Distance calculation time!
+
+# All variables to be used for this analysis are continuous, so we do not need
+# to consider categorical distance measures. Let's check for correlations:
+Pharm.cor = cor(Pharm.norm[,c(3:11)])
+row.names(Pharm.norm) <- Pharm.norm[,1]
+#install.packages("corrplot")
+suppressWarnings(suppressPackageStartupMessages(library(corrplot))) #Suppress noise
+corrplot(Pharm.cor)
+# There are some occasional moderately large correlations in here, but no 
+# obvious clusters that would suggest multiple variables measuring the same
+# construct. There is a high correlation (.8) between Market_Cap and ROA, and
+# and the two share similar correlation patterns to the other variables. Since
+# this is only two of the nine variables, any bias from this is unlikely to be
+# extreme, but it bears keeping in mind.
+# Thus, we will apply Euclidean distance here.
+
+d <- dist(Pharm.norm[,c(3:11)], method="euclidean")
+
+#install.packages("tidyverse")
+#install.packages("factoextra")
+suppressWarnings(suppressPackageStartupMessages(library(tidyverse))) #Suppress noise
+suppressWarnings(suppressPackageStartupMessages(library(factoextra))) #Suppress noise
+fviz_nbclust(Pharm.norm[,c(3:11)], kmeans, method="wss")
+fviz_nbclust(Pharm.norm[,c(3:11)], kmeans, method="silhouette")
+# The Elbow plot shows two points of diminishing returns: k=2 and k=6.
+# The silhouette plot identifies k=5 as ideal, and k=5 is relatively close to
+# k=6 on the elbow plot. We'll proceed with k=5 with the recognition that
+# with only 21 observations, some clusters may not be particularly useful.
+# We might consider falling back to k=2 to derive more general observations
+# later, if k=5 is not informative.
+
+set.seed(444) # 4!
+km <- kmeans(Pharm.norm[,c(3:11)], centers=5)
+km$size # Clusters range in size from 2 to 8.
+km$cluster # Cluster membership for each company.
+dist(km$centers)
+# The furthest separated clusters are 1 and 4. No cluster distance is near 1.0,
+# so we have adequate cluster separation.
+fviz_cluster(km, data=Pharm.norm[,c(3:11)])
+# AHM (in cluster 3) appears to be an outlier that did not fit neatly into any
+# centroid. PHA and AGN stand apart from the others, so it makes sense that
+# they would be clustered together. ELN also appears to be something of an edge
+# case, as its presence has caused cluster 3 to be long and narrow on the plot.
+
+km$withinss
+# The cluster with the highest within sum of squares is #5, mostly due to AHM
+# but also WYE. However, its SS is not that much larger than cluster 1, which 
+# holds only three. Thus, we see that the clustering algorithm has generated 
+# five clusters with low within-SS and high distance between centroids.
+
+#b. Interpret the clusters with respect to the numerical variables used in 
+#forming the clusters.
+
+kmsummary <- cbind(km$cluster,Pharm.norm[,c(3:11)])
+kmsort <- kmsummary[order(kmsummary$`km$cluster`) , ]
+km$centers
+
+# These are standardized (normed) values representing number of standard
+# deviations away from the column's respective mean. Negative normed values
+# do not necessarily indicate negative values in the un-normed data, so we
+# want to interpret both sets of numbers together before drawing conclusions.
+
+# Here are the cluster data using the unstandardized values:
+kmsummary <- cbind(km$cluster,Pharm[,c(3:11)])
+kmsort <- kmsummary[order(kmsummary$`km$cluster`) , ]
+aggregate(kmsort[,c(2:10)], list(kmsort$`km$cluster`), mean)
+# The defining features of each cluster are as follows:
+# 1: High standardized Beta and high Leverage
+# 2: Very high PE Ratio.
+# 3: High Rev_Growth
+# 4: High Market_Cap, ROE, ROA, and Asset_Turnover; above average profits
+# 5: Middling values overall; above average profits
+
+#c. Is there a pattern in the clusters with respect to the numerical variables
+#(10 to 12)? (those not used in forming the clusters)
+
+kmsummary <- cbind(km$cluster,Pharm.norm[,c(12:14)])
+(kmsort <- kmsummary[order(kmsummary$`km$cluster`) , ])
+
+# There is no strong obvious trend in the categorical variables which were
+# excluded from the analysis, but some weak patterns are visible:
+
+# 1: 2/3 are recommended Hold. All three non-NYSE stocks are in this cluster.
+# 2: With only two entries, the only shared features are NYSE. Not informative.
+# 3: All four have Moderate recommendations.
+# 4: Of the four, there are two pairs of Moderate Buy and Hold. 3/4 are US-based
+# 5: This is the largest cluster. Most are recommended Hold. Since this cluster
+# did not have outstandingly high or low performance in any dimension, it makes 
+# sense that it would feature a higher proportion of Hold recommendations.
+
+#d. Provide an appropriate name for each cluster using any or all of the
+#variables in the dataset.
+
+# I have drawn primarily on the relative (i.e., normed) values to name each of 
+# the five clusters based on the variable(s) that most set that cluster apart 
+# from the other four:
+# 1: High Beta Leverage Centers
+# 2: Price-to-Earnings Performers
+# 3: Revenue Growers
+# 4: High Cap Return Generators
+# 5: Profitable Median Performers
