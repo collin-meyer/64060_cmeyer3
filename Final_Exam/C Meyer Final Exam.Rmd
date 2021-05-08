@@ -1,0 +1,263 @@
+---
+title: "C Meyer Final Exam"
+author: "Collin"
+date: "5/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+CRISA <- read.csv("D:/GoogleDrive/Studenting/2021 Spring/Machine Learning/Assignments/Final Exam/BathSoap.csv"
+                    , header=TRUE, row.names=1)
+summary(CRISA)
+# Columns 19-45 loaded in as strings because of their percentage sign.
+# We need to convert them into actual percentages:
+
+suppressWarnings(suppressPackageStartupMessages(library(tidyverse)))
+for (i in 19:45) {
+CRISA[,i] <- parse_number(CRISA[,i])/100
+}
+
+rm(i)
+summary(CRISA)
+#Fixed.
+
+#1. Use k-means clustering to identify clusters of households based on:
+#a. The variables that describe purchase behavior (including brand loyalty)
+
+# For our purposes, I'll consider Brand Loyalty a score of the highest column
+# in the "proportion of brand purchased."
+
+#install.packages("dplyr")
+suppressWarnings(suppressPackageStartupMessages(library(dplyr)))
+Get_Highest_Loyalty <- CRISA %>% select (22:29) %>% mutate (Br_Col_Max = do.call(pmax, (.))) %>%
+  select(Br_Col_Max)
+CRISA$Brand_Loyalty <- Get_Highest_Loyalty$Br_Col_Max
+rm(Get_Highest_Loyalty)
+
+#install.packages('FedData')
+suppressWarnings(suppressPackageStartupMessages(library(FedData)))
+DF <- CRISA
+CN <- colnames(DF[,31:34])[apply(DF[,31:34],1,which.max)]
+CRISA$Pr.Cat.Typical = as.integer(substr_right(CN,1))
+rm(DF)
+rm(CN)
+
+suppressWarnings(suppressPackageStartupMessages(library(caret)))
+CRISA.norm <- CRISA
+norm.values <- preProcess(CRISA[,c(10:18,46)], method=c("center", "scale"))
+CRISA.norm[,c(10:18,46)] <- predict(norm.values, CRISA[,c(10:18,46)]) #These variables are all on different scales. Normalize.
+CRISA.cor = cor(CRISA.norm)
+#install.packages("corrplot")
+suppressWarnings(suppressPackageStartupMessages(library(corrplot)))
+corrplot(CRISA.cor)
+# In the top left corner, we see some correlations, but nothing alarming.
+# The rest of the matrix is largely orthogonal variables. This is as expected
+# because most of those variables are proportions or individual brand-level
+# tracking columns. Brand 55, whatever that is, clearly dominates price category
+# 3 and Proposition category 14. It seems to be the only brand filling that
+# niche. There are a couple other high correlations like this, but it's nothing
+# we need to be concerned about for clustering purposes.
+
+suppressWarnings(suppressPackageStartupMessages(library(factoextra)))
+
+PurchaseBehav <- c(10:21,46)
+
+d_PB <- dist(CRISA.norm[,PurchaseBehav], method="euclidean")
+fviz_nbclust(CRISA.norm[,PurchaseBehav], kmeans, method="wss")
+fviz_nbclust(CRISA.norm[,PurchaseBehav], kmeans, method="silhouette")
+# The silhouette plot indicates that k=3 would be ideal to balance within and
+# between sums of squares. This decision can also be justified using the elbow
+# plot, whose Y axis begins descending slower after that point. The move from
+# 3 clusters to 10, for example, would reduce within-SS from ~4000 only down
+# to ~2000. Anything beyond 5 would simply be needlessly complex for marketing.
+# Therefore, k=3 is appropriate for this purpose.
+
+set.seed(6) # F for Final. :)
+km_PB <- kmeans(CRISA.norm[,PurchaseBehav], centers=3)
+km_PB$centers
+km_PB$size
+
+fviz_cluster(km_PB, data=CRISA.norm[,PurchaseBehav])
+```
+
+```{r}
+#b. The variables that describe the basis for purchase
+
+PurchaseBasis <- c(31:45)
+
+d_BS <- dist(CRISA.norm[,PurchaseBasis], method="euclidean")
+fviz_nbclust(CRISA.norm[,PurchaseBasis], kmeans, method="wss")
+fviz_nbclust(CRISA.norm[,PurchaseBasis], kmeans, method="silhouette")
+# Here, the Elbow plot could be used to justify having quite a few clusters.
+# However, we are interested in increasing the distance between clusters, not
+# just in minimizing within-SS. Therefore, we will again defer to the
+# silhouette plot and select two clusters.
+
+set.seed(62)
+km_BS <- kmeans(CRISA.norm[,PurchaseBasis], centers=2)
+fviz_cluster(km_BS, data=CRISA.norm[,PurchaseBasis])
+# The agglomeration seems imperfect, but you can see that there is a clear
+# divide between the two clusters. This is probably sufficient, so what is
+# the difference between the two?
+km_BS$centers
+km_BS$size
+# Cluster 1 is marked by higher scores in categories 1, 2, and 5. 
+# Cluster 2 is dominated by categories 3 and 14.
+# This assignment doesn't indicate what these categories mean, but our 
+# hypothetical marketing team will presumably be able to answer that question.
+```
+
+```{r}
+#c. The variables that describe both purchase behavior and basis of purchase
+# Both of the variable sets above, but examined simultaneously.
+
+PurchaseBoth <- c(10:21,46,31:45)
+
+fviz_nbclust(CRISA.norm[,PurchaseBoth], kmeans, method="wss")
+fviz_nbclust(CRISA.norm[,PurchaseBoth], kmeans, method="silhouette")
+# Using both sets of variables, the silhouette plot prefers k=4. The Elbow plot
+# would justify the use of k=3 again, which would result in little change in
+# the average silhouette width. Since our emphasis is in distinguishing between
+# clusters, we'll defer to the silhouette plot.
+
+set.seed(63)
+km_Both <- kmeans(CRISA.norm[,PurchaseBoth], centers=4)
+fviz_cluster(km_Both, data=CRISA.norm[,PurchaseBoth])
+# This suggests adequate dispersion for much of the data, but the center of the
+# plot contains overlapping cluster regions, which is less than idea. However,
+# these regions are relatively small, so let's proceed to see how useful
+# these clusters are:
+km_Both$centers
+# Since the focus of this is on brand loyalty, let's start there.
+# Cluster 2 is marked by the highest average brand loyalty by far. Clusters 1 
+# and 3 evidence an average degree of brand loyalty, while Cluster 4's customers
+# demonstrate little to no brand loyalty on average. Let's see how these
+# clusters segment the customers demographically with unstandardized values:
+
+kmsummary <- as.data.frame(km_Both$cluster)
+names(kmsummary)[1] <- "Cluster"
+kmsummary <- cbind(kmsummary,CRISA)
+aggregate(kmsummary[,PurchaseBoth+1], list(kmsummary$Cluster), mean)
+
+#install.packages("table1")
+suppressWarnings(suppressPackageStartupMessages(library(table1)))
+
+kmsummary$Cluster <- factor(kmsummary$Cluster, levels = c(1,2,3,4), labels = c("Grannies", "Budget Shoppers", "Median Household", "High Spenders"))
+
+kmsummary$SEC <- factor (kmsummary$SEC, levels=c(1:5), labels=c("Highest","High","Medium","Low", "Lowest"))
+kmsummary$FEH <- factor(kmsummary$FEH, levels=c(0:3), labels=c("Unspecified","Vegetarian","Vegetarian+Eggs","Nonvegetarian"))
+kmsummary$SEX <- factor(kmsummary$SEX, levels=c(0:2), labels=c("Unknown","Male","Female"))
+kmsummary$AGE <- factor(kmsummary$AGE, levels=c(1:4), labels=c("Bracket 1", "Bracket 2","Bracket 3", "Bracket 4"))
+kmsummary$EDU <- factor(kmsummary$EDU, levels=c(0:9))
+kmsummary$CS <- factor(kmsummary$CS, levels=c(0:2), labels=c("Unknown","TV Available","TV Unavailable"))
+kmsummary$Pr.Cat.Typical <- factor(kmsummary$Pr.Cat.Typical, levels=c(1:4), labels=c("Price Category 1","Price Category 2","Price Category 3","Price Category 4"))
+
+label(kmsummary$SEC) <- "Socioeconomic Class"
+label(kmsummary$Affluence.Index) <- "Affluence Index"
+label(kmsummary$Avg..Price) <- "Average Purchase Price"
+label(kmsummary$FEH) <- "Eating Habits"
+label(kmsummary$MT) <- "Native Language"
+label(kmsummary$SEX) <- "Gender"
+label(kmsummary$AGE) <- "Age"
+label(kmsummary$EDU) <- "Education (1=min, 9=max, 0=unknown)"
+label(kmsummary$HS) <- "Number in Household"
+label(kmsummary$CHILD) <- "Children in Household"
+label(kmsummary$CS) <- "Television Availability"
+label(kmsummary$Brand_Loyalty) <- "Brand Loyalty (Max Proportion)"
+label(kmsummary$Brand.Runs) <- "Consecutive Brand Purchases"
+label(kmsummary$Pr.Cat.Typical) <- "Typical Price Category of Purchase"
+
+table1(~ SEC + Affluence.Index + Avg..Price + Pr.Cat.Typical + FEH + SEX + AGE +
+         EDU + HS + CHILD + CS + Brand_Loyalty + Brand.Runs | Cluster,
+       data=kmsummary)
+
+
+clustermeans <- kmsummary %>%
+  group_by(Cluster) %>%
+    summarise(
+      PC5 = mean(PropCat.5),
+      PC6 = mean(PropCat.6),
+      PC7 = mean(PropCat.7),
+      PC8 = mean(PropCat.8),
+      PC9 = mean(PropCat.9),
+      PC10 = mean(PropCat.10),
+      PC11 = mean(PropCat.11),
+      PC12 = mean(PropCat.12),
+      PC13 = mean(PropCat.13),
+      PC14 = mean(PropCat.14),
+      PC15 = mean(PropCat.15),
+      BR144 = mean(Br..Cd..57..144),
+      BR55 = mean(Br..Cd..55),
+      BR272 = mean(Br..Cd..272),
+      BR286 = mean(Br..Cd..286),
+      BR24 = mean(Br..Cd..24),
+      BR481 = mean(Br..Cd..481),
+      BR352 = mean(Br..Cd..352),
+      BR5 = mean(Br..Cd..5)
+    )
+
+barplot(as.matrix(clustermeans[2:12]), beside=T, legend=clustermeans$Cluster,
+        col=colors()[c(9,40,60,80)], ylab="Average Proportion", xlab = 
+        "Sales Proposition Category")
+
+barplot(as.matrix(clustermeans[13:20]), beside=T, legend=clustermeans$Cluster,
+        col=colors()[c(9,40,60,80)], ylab="Average Proportion", xlab = 
+          "Brands Purchased")
+
+# Clusters 3 and 4 are the largest segment of the customer base by far. C3 
+# comprises nearly half the data by itself, and C4 represents another third.
+# Our marketing efforts should begin with these groups.
+
+# First, C3 is socioeconomically diverse but primarily purchases items in
+# price category 2. They are somewhat but not overly brand loyal, tending to buy
+# less than 40% of their products from a consistent brand. Half of their 
+# purchases are made in Proposition Category 5.
+
+# Second, C4 tends to be on the wealthier side relative to C3, with the largest
+# proportion of "highest" socioeconomic class of the four clusters and the
+# largest affluence index. This group also makes most of their purchases
+# in price category 2. This group is generally more educated than C3, nearly
+# all being rated at or above 4. Their households tend to have an additional
+# adult relative to C3 but no difference with respect to children in the
+# household. This may represent a difference of one-parent versus two-parent
+# households. This group is also noticeably less brand loyal than C3 when 
+# viewed as a proportion, but they have the highest consecutive brand purchases
+# of any cluster. Their purchasing basis is more diverse than C3, again being
+# predominantly within Proposition Category 5, but with more spread across their
+# secondary categories (mostly 6, 7, and 8).
+
+# Customers in Cluster 1 have a purchasing basis that mirror C3's; no special
+# basis considerations are due here. Their purchase price category pattern
+# follows C4's, so again, no special considerations are due. This group tends
+# to skew old, nearly two-thirds being in age bracket 4, and they typically
+# have larger households with fewer children. Their brand loyalty follows the
+# trend seen in C3; although they are not steadfastly brand loyal, they exhibit
+# longer consecutive brand purchases.
+
+# Finally, C2 deviates from the others in several notable ways. First, this 
+# group has the largest proportion of socioeconomic "low" shoppers, and 75% of
+# their purchases are made in price category 3. This group exhibits the highest
+# proportion of brand loyalty, with 87% of their purchases tending to be within
+# the same brand. Additionally, their basis for purchases is very different
+# from the other three clusters: two-thirds fall into Proposition Category 14.
+
+# Based on the above, I would recommend the following:
+# * Price Category: Most of our marketing efforts should focus on Category 2. 
+# Materials addressed to customers in Cluster 2 should instead highlight our
+# selection of items in Category 3.
+# * Brand Loyalty: Regardless of which definition of Brand Loyalty you apply,
+# most customers buy from different brands. No single brand dominates for
+# C1, C3, and C4, but the most popular brand given is Brand 144. C2 buys
+# predominantly from Brand 55.
+# * Prices: Marketing toward C1, C3, C4 should emphasize items in category 3,
+# whereas materials for C2 should emphasize Category 3.
+# * Medium: Most customers in most groups have access to TV, but marketing
+# toward C2 and C3 should consist of a higher proportion of mail ads due to
+# their lower levels of ownership.
+```
